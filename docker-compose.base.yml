@@ -79,8 +79,6 @@ services:
       - "rabbitmq"
       - "db"
       - "app"
-    env_file:
-      - .env
     environment:
       - POSTGRES_USER
       - POSTGRES_PASSWORD
