@@ -107,7 +107,7 @@ services:
     ports:
       - "${INTERFACE_HTTPS_PORT:-443}:${INTERFACE_HTTPS_PORT:-443}"
     volumes:
-      - "./certificates/web_certificates/:/www/certs/:ro"
+      - /home/dietpi/iris-web/ssl/:/www/certs/:ro
     restart: always
     depends_on:
       - "app"
