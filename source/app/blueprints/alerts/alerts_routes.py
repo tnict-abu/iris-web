@@ -27,7 +27,8 @@ from werkzeug import Response
 import app
 from app import db
 from app.blueprints.case.case_comments import case_comment_update
-from app.datamgmt.alerts.alerts_db import get_filtered_alerts, get_alert_by_id, create_case_from_alert
+from app.datamgmt.alerts.alerts_db import get_filtered_alerts, get_alert_by_id, create_case_from_alert, \
+    register_related_alerts, delete_related_alerts_cache
 from app.datamgmt.alerts.alerts_db import merge_alert_in_case, unmerge_alert_from_case, cache_similar_alert
 from app.datamgmt.alerts.alerts_db import get_related_alerts, get_related_alerts_details
 from app.datamgmt.alerts.alerts_db import get_alert_comments, delete_alert_comment, get_alert_comment
@@ -38,7 +39,7 @@ from app.datamgmt.manage.manage_access_control_db import check_ua_case_client, u
 from app.iris_engine.access_control.utils import ac_set_new_case_access
 from app.iris_engine.module_handler.module_handler import call_modules_hook
 from app.iris_engine.utils.tracker import track_activity
-from app.models.alerts import AlertStatus
+from app.models.alerts import AlertStatus, AlertSimilarity, Alert
 from app.models.authorization import Permissions
 from app.schema.marshables import AlertSchema, CaseSchema, CommentSchema, CaseAssetsSchema, IocSchema
 from app.util import ac_api_requires
@@ -109,43 +110,50 @@ def alerts_list_route() -> Response:
         except ValueError:
             return response_error('Invalid alert ioc')
 
-    alert_schema = AlertSchema()
+    fields_str = request.args.get('fields')
+    if fields_str:
+        # Split into a list
+        fields = [field.strip() for field in fields_str.split(',') if field.strip()]
+    else:
+        fields = None
 
-    filtered_data = get_filtered_alerts(
-        start_date=request.args.get('source_start_date'),
-        end_date=request.args.get('source_end_date'),
-        title=request.args.get('alert_title'),
-        description=request.args.get('alert_description'),
-        status=request.args.get('alert_status_id', type=int),
-        severity=request.args.get('alert_severity_id', type=int),
-        owner=request.args.get('alert_owner_id', type=int),
-        source=request.args.get('alert_source'),
-        tags=request.args.get('alert_tags'),
-        classification=request.args.get('alert_classification_id', type=int),
-        client=request.args.get('alert_customer_id'),
-        case_id=request.args.get('case_id', type=int),
-        alert_ids=alert_ids,
-        page=page,
-        per_page=per_page,
-        sort=request.args.get('sort'),
-        assets=alert_assets,
-        iocs=alert_iocs,
-        resolution_status=request.args.get('alert_resolution_id', type=int),
-        current_user_id=current_user.id
-    )
+    try:
+        filtered_data = get_filtered_alerts(
+            start_date=request.args.get('creation_start_date'),
+            end_date=request.args.get('creation_end_date'),
+            source_start_date=request.args.get('source_start_date'),
+            source_end_date=request.args.get('source_end_date'),
+            source_reference=request.args.get('source_reference'),
+            title=request.args.get('alert_title'),
+            description=request.args.get('alert_description'),
+            status=request.args.get('alert_status_id', type=int),
+            severity=request.args.get('alert_severity_id', type=int),
+            owner=request.args.get('alert_owner_id', type=int),
+            source=request.args.get('alert_source'),
+            tags=request.args.get('alert_tags'),
+            classification=request.args.get('alert_classification_id', type=int),
+            client=request.args.get('alert_customer_id'),
+            case_id=request.args.get('case_id', type=int),
+            alert_ids=alert_ids,
+            page=page,
+            per_page=per_page,
+            sort=request.args.get('sort', 'desc', type=str),
+            custom_conditions=request.args.get('custom_conditions'),
+            assets=alert_assets,
+            iocs=alert_iocs,
+            resolution_status=request.args.get('alert_resolution_id', type=int),
+            current_user_id=current_user.id,
+            fields=fields
+        )
+
+    except Exception as e:
+        app.app.logger.exception(e)
+        return response_error(str(e))
 
     if filtered_data is None:
         return response_error('Filtering error')
 
-    alerts = {
-        'total': filtered_data.total,
-        'alerts': alert_schema.dump(filtered_data.items, many=True),
-        'last_page': filtered_data.pages,
-        'current_page': filtered_data.page,
-        'next_page': filtered_data.next_num if filtered_data.has_next else None,
-    }
-
-    return response_success(data=alerts)
+    return response_success(data=filtered_data)
 
 
 @alerts_blueprint.route('/alerts/add', methods=['POST'])
@@ -201,6 +209,8 @@ def alerts_add_route() -> Response:
         cache_similar_alert(new_alert.alert_customer_id, assets=assets_list,
                             iocs=iocs_list, alert_id=new_alert.alert_id,
                             creation_date=new_alert.alert_source_event_time)
+
+        register_related_alerts(new_alert, assets_list=assets, iocs_list=iocs)
         
         new_alert = call_modules_hook('on_postload_alert_create', data=new_alert)
 
@@ -358,6 +368,9 @@ def alerts_update_route(alert_id) -> Response:
         if data.get('alert_owner_id') is None and updated_alert.alert_owner_id is None:
             updated_alert.alert_owner_id = current_user.id
 
+        if data.get('alert_owner_id') == "-1" or data.get('alert_owner_id') == -1:
+            updated_alert.alert_owner_id = None
+
         # Save the changes
         db.session.commit()
 
@@ -435,6 +448,12 @@ def alerts_batch_update_route() -> Response:
             if not user_has_client_access(current_user.id, alert.alert_customer_id):
                 return response_error('User not entitled to update alerts for the client', status=403)
 
+            if getattr(alert, 'alert_owner_id') is None:
+                updates['alert_owner_id'] = current_user.id
+
+            if data.get('alert_owner_id') == "-1" or data.get('alert_owner_id') == -1:
+                updates['alert_owner_id'] = None
+
             # Deserialize the JSON data into an Alert object
             alert_schema.load(updates, instance=alert, partial=True)
 
@@ -494,7 +513,7 @@ def alerts_batch_delete_route() -> Response:
     if not success:
         return response_error(logs)
     
-    alert = call_modules_hook('on_postload_alert_delete', data=f'alert_ids: {alert_ids}')
+    alert = call_modules_hook('on_postload_alert_delete', data={"alert_ids": alert_ids})
 
     track_activity(f"deleted alerts #{','.join(str(alert_id) for alert_id in alert_ids)}", ctx_less=True)
 
@@ -527,6 +546,9 @@ def alerts_delete_route(alert_id) -> Response:
 
         # Delete the case association
         delete_similar_alert_cache(alert_id=alert_id)
+
+        # Delete the similarity entries
+        delete_related_alerts_cache([alert_id])
 
         # Delete the alert from the database
         db.session.delete(alert)

@@ -1,4 +1,5 @@
 let sortOrder ;
+let editor = null;
 
 function objectToQueryString(obj) {
   return Object.keys(obj)
@@ -519,17 +520,22 @@ const options = {
     interaction: {
         hideEdgesOnDrag: false,
         tooltipDelay: 100,
-        zoomView: false
+        zoomView: false,
+        navigationButtons: true,
+        keyboard: {
+            enabled: true,
+            bindToWindow: true
+        }
     },
-    height: (window.innerHeight - 250) + "px",
+    height: (window.innerHeight - 400) + "px",
     clickToUse: true,
     physics: {
         forceAtlas2Based: {
             gravitationalConstant: -167,
-            centralGravity: 0.04,
+            centralGravity: 0.02,
             springLength: 0,
-            springConstant: 0.02,
-            damping: 0.9
+            springConstant: 0.01,
+            damping: 0.1
         },
         minVelocity: 0.41,
         solver: "forceAtlas2Based",
@@ -594,7 +600,7 @@ const network = new vis.Network(container, data, options);
               $('#view-alert').data('node-id', node_id);
               $('#view-alert').data('node-type', node_type);
               if (node_type === 'alert' || node_type === 'case') {
-                  $('#view-alert-text').text(`View on ${node_type} #${node_id}`);
+                  $('#view-alert-text').text(`View ${node_type} #${node_id}`);
               } else {
                     $('#view-alert-text').text(`Pivot on ${node_type} ${node_id}`);
               }
@@ -806,7 +812,11 @@ function addTagFilter(this_object) {
 
 function getFiltersFromUrl() {
     const formData = new FormData($('#alertFilterForm')[0]);
-    return Object.fromEntries(formData.entries());
+    const filters = Object.fromEntries(formData.entries());
+
+    filters.custom_conditions = editor.getValue();
+
+    return filters;
 }
 
 function alertResolutionToARC(resolution, alert_id) {
@@ -983,23 +993,41 @@ function renderAlert(alert, expanded=false, modulesOptionsAlertReq,
                       </div>` : ''}
                       ${alert.alert_source_link ? `<div class="row mt-2">
                         <div class="col-md-3"><b>Source Link:</b></div>
-                        <div class="col-md-9">${
+                        <div class="col-md-9 copy-value">${
                             alert.alert_source_link && alert.alert_source_link.startsWith('http') 
-                            ? `<a href="${alert.alert_source_link}">${alert.alert_source_link}</a>` 
+                            ? `<a href="${alert.alert_source_link}" target="_blank" rel="noopener noreferrer">${alert.alert_source_link}</a>
+                                <button class="copy-btn ml-2" data-value="${escapeHtml(alert.alert_source_link)}">
+                                    <i class="fa fa-copy text-dark"></i>
+                                </button>`
                             : 'No valid link provided'
                           }</div>
                       </div>` : ''}
                       ${alert.alert_source_ref ? `<div class="row mt-2">
                         <div class="col-md-3"><b>Source Reference:</b></div>
-                        <div class="col-md-9">${alert.alert_source_ref}</div>
+                        <div class="col-md-9 copy-value">
+                            ${alert.alert_source_ref}
+                            <button class="copy-btn ml-2" data-value="${escapeHtml(alert.alert_source_ref)}">
+                                    <i class="fa fa-copy text-dark"></i>
+                            </button>
+                        </div>
                       </div>` : ''}
                       ${alert.alert_source_event_time ? `<div class="row mt-2">
                         <div class="col-md-3"><b>Source Event Time:</b></div>
-                        <div class="col-md-9">${formatTime(alert.alert_source_event_time)} UTC</div>
+                        <div class="col-md-9 copy-value">
+                            ${formatTime(alert.alert_source_event_time)} UTC
+                            <button class="copy-btn ml-2" data-value="${formatTime(alert.alert_source_event_time)}">
+                                    <i class="fa fa-copy text-dark"></i>
+                            </button>
+                        </div>
                       </div>` : ''}
                       ${alert.alert_creation_time ? `<div class="row mt-2">
                         <div class="col-md-3"><b>IRIS Creation Time:</b></div>
-                        <div class="col-md-9">${formatTime(alert.alert_creation_time)} UTC</div>
+                        <div class="col-md-9 copy-value">
+                            ${formatTime(alert.alert_creation_time)} UTC
+                            <button class="copy-btn ml-2" data-value="${formatTime(alert.alert_creation_time)}">
+                                    <i class="fa fa-copy text-dark"></i>
+                            </button>
+                        </div>
                       </div>` : ''}
                     
                     <div class="separator-solid"></div>
@@ -1089,7 +1117,12 @@ function renderAlert(alert, expanded=false, modulesOptionsAlertReq,
                               .map(
                                   (ioc) => `
                                                  <tr>
-                                                   <td>${filterXSS(ioc.ioc_value)}</td>
+                                                   <td class="copy-value">
+                                                        ${filterXSS(ioc.ioc_value)}
+                                                        <button class="copy-btn ml-2" data-value="${filterXSS(ioc.ioc_value)}">
+                                                            <i class="fa fa-copy text-dark"></i>
+                                                        </button>
+                                                   </td>
                                                    <td>${filterXSS(ioc.ioc_description)}</td>
                                                    <td>${ioc.ioc_type ? filterXSS(ioc.ioc_type.type_name) : '-'}</td>
                                                    <td>${filterXSS(ioc.ioc_tlp) ? ioc.ioc_tlp : '-'}</td>
@@ -1141,6 +1174,12 @@ function renderAlert(alert, expanded=false, modulesOptionsAlertReq,
                   .map(
                       (asset) => `
                                      <tr>
+                                       <td class="copy-value">
+                                            ${asset.asset_name ? filterXSS(asset.asset_name) : '-'}
+                                            <button class="copy-btn ml-2" data-value="${asset.asset_name ? filterXSS(asset.asset_name) : '-'}">
+                                                <i class="fa fa-copy text-dark"></i>
+                                            </button>
+                                       </td>
                                        <td>${asset.asset_name ? filterXSS(asset.asset_name) : '-'}</td>
                                        <td>${asset.asset_description ? filterXSS(asset.asset_description) : '-'}</td>
                                        <td>${asset.asset_type ? filterXSS(asset.asset_type.asset_name) : '-'}</td>
@@ -1307,11 +1346,17 @@ async function updateAlerts(page, per_page, filters = {}, paging=false){
       filters = getFiltersFromUrl();
   }
 
+  filters.custom_conditions = editor.getValue();
+
   const alertsContainer = $('.alerts-container');
   alertsContainer.html('<h4 class="ml-auto mr-auto">Retrieving alerts...</h4>');
 
   const filterString = objectToQueryString(filters);
-  const data = await fetchAlerts(page, per_page, filterString, sortOrder);
+  const data = await fetchAlerts(page, per_page, filterString, sortOrder).catch((error) => {
+        notify_error('Failed to fetch alerts');
+        alertsContainer.html('<h4 class="ml-auto mr-auto">Oops error loading the alerts - Check logs</h4>');
+        console.error(error);
+    });
 
   if (!notify_auto_api(data, true)) {
     return;
@@ -1412,6 +1457,11 @@ async function updateAlerts(page, per_page, filters = {}, paging=false){
   filterString || queryParams.get('filter_id') ? $('#resetFilters').show() : $('#resetFilters').hide();
 
   alertsContainer.show();
+
+  $('.copy-btn').off().on('click', function() {
+      let value = $(this).data('value');
+      copy_text_clipboard(value);
+  });
 }
 
 $('#alertsPerPage').on('change', (e) => {
@@ -1444,6 +1494,8 @@ function refreshAlerts(){
 
     const formData = new FormData($('#alertFilterForm')[0]);
     const filters = Object.fromEntries(formData.entries());
+
+    filters.custom_conditions = editor.getValue();
 
     updateAlerts(page_number, per_page, filters)
         .then(() => {
@@ -1507,6 +1559,7 @@ $('#resetFilters').on('click', function () {
         }
     });
 
+    editor.setValue("", 1);
     // Reset the saved filters dropdown
     resetSavedFilters(null);
 
@@ -1754,6 +1807,8 @@ $('#saveFilterButton').on('click', function () {
     const filterDescription = $('#filterDescription').val();
     const filterIsPrivate = $('#filterIsPrivate').prop('checked');
 
+    filterData.custom_conditions = editor.getValue();
+
     if (!filterName) return;
 
     const url = '/filters/add';
@@ -1887,6 +1942,12 @@ function setFormValuesFromUrl() {
 
   queryParams.forEach((value, key) => {
     const input = form.find(`[name="${key}"]`);
+   if (key === 'custom_conditions') {
+        // If there's a custom_conditions param, load it into the ACE editor
+        editor.setValue(value, 1); // 1 = move cursor to start
+        return;
+    }
+
     if (input.length > 0) {
       if (input.prop('type') === 'checkbox') {
         input.prop('checked', value in ['true', 'y', 'yes', '1', 'on']);
@@ -2070,6 +2131,75 @@ $(document).ready(function () {
             .catch(error => console.error(error));
         });
       }
+
+
+    editor = ace.edit('custom_conditions');
+    if ($("#custom_conditions").attr("data-theme") != "dark") {
+        editor.setTheme("ace/theme/tomorrow");
+    } else {
+        editor.setTheme("ace/theme/iris_night");
+    }
+    editor.session.setMode("ace/mode/json");
+    editor.renderer.setShowGutter(true);
+    editor.setOption("showLineNumbers", true);
+    editor.setOption("showPrintMargin", false);
+    editor.setOption("displayIndentGuides", true);
+    editor.setOption("maxLines", "Infinity");
+    editor.setOption("minLines", "2");
+    editor.setOption("autoScrollEditorIntoView", true);
+    editor.session.setUseWrapMode(true);
+    editor.setOption("indentedSoftWrap", false);
+    editor.renderer.setScrollMargin(8, 5)
+    editor.setOption("enableBasicAutocompletion", true);
+
+    editor.setOption("enableBasicAutocompletion", true);
+    editor.setOption("enableLiveAutocompletion", true);
+
+        // Use the langTools from ACE for autocompletion
+        let langTools = ace.require("ace/ext/language_tools");
+
+        // Define a custom completer
+        let customCompleter = {
+            getCompletions: function(editor, session, pos, prefix, callback) {
+                const completions = [
+                    { caption: '"field": "alert_title"', value: '"field": "alert_title"', meta: "field" },
+                    { caption: '"field": "alert_description"', value: '"field": "alert_description"', meta: "field" },
+                    { caption: '"field": "alert_source"', value: '"field": "alert_source"', meta: "field" },
+                    { caption: '"field": "alert_tags"', value: '"field": "alert_tags"', meta: "field" },
+                    { caption: '"field": "alert_status_id"', value: '"field": "alert_status_id"', meta: "field" },
+                    { caption: '"field": "alert_severity_id"', value: '"field": "alert_severity_id"', meta: "field" },
+                    { caption: '"field": "alert_classification_id"', value: '"field": "alert_classification_id"', meta: "field" },
+                    { caption: '"field": "alert_customer_id"', value: '"field": "alert_customer_id"', meta: "field" },
+                    { caption: '"field": "source_start_date"', value: '"field": "source_start_date"', meta: "field" },
+                    { caption: '"field": "source_end_date"', value: '"field": "source_end_date"', meta: "field" },
+                    { caption: '"field": "creation_start_date"', value: '"field": "creation_start_date"', meta: "field" },
+                    { caption: '"field": "creation_end_date"', value: '"field": "creation_end_date"', meta: "field" },
+                    { caption: '"field": "alert_assets"', value: '"field": "alert_assets"', meta: "field" },
+                    { caption: '"field": "alert_iocs"', value: '"field": "alert_iocs"', meta: "field" },
+                    { caption: '"field": "alert_ids"', value: '"field": "alert_ids"', meta: "field" },
+                    { caption: '"field": "source_reference"', value: '"field": "source_reference"', meta: "field" },
+                    { caption: '"field": "case_id"', value: '"field": "case_id"', meta: "field" },
+                    { caption: '"field": "alert_owner_id"', value: '"field": "alert_owner_id"', meta: "field" },
+                    { caption: '"field": "alert_resolution_id"', value: '"field": "alert_resolution_id"', meta: "field" },
+                    { caption: '"operator": "in"', value: '"operator": "in"', meta: "operator" },
+                    { caption: '"operator": "not_in"', value: '"operator": "not_in"', meta: "operator" },
+                    { caption: '"operator": "eq"', value: '"operator": "eq"', meta: "operator" },
+                    { caption: '"operator": "like"', value: '"operator": "like"', meta: "operator" },
+                    { caption: '"value": [1]', value: '"value": [1]', meta: "value" }
+                ];
+
+                // Filter the completions based on the current prefix if desired
+                let filtered = completions;
+                if (prefix) {
+                    filtered = completions.filter(item => item.caption.toLowerCase().includes(prefix.toLowerCase()));
+                }
+
+                callback(null, filtered);
+            }
+        };
+
+        // Add the custom completer to ACE
+        langTools.addCompleter(customCompleter);
 
     fetchSavedFilters()
         .then(() => {
